@@ -1,16 +1,22 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+	"main.go/internal/databases"
 )
 
 type apiConfig struct {
 	fileServerHits atomic.Int32
+	dbQueries *databases.Queries
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler{
@@ -19,18 +25,6 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler{
 		next.ServeHTTP(w, r)
 	})
 }
-
-// func (cfg *apiConfig) displayServerHits() http.Handler {
-// 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-// 		fmt.Fprintf(w, "Hits: %d", cfg.fileServerHits.Load())
-// 	})
-// }
-
-// func (cfg *apiConfig) resetServerHitCount() http.Handler {
-// 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-// 		fmt.Fprintf(w, "Hits: %d", cfg.fileServerHits.Swap(0))
-// 	})
-// }
 
 func displayServerHits(w http.ResponseWriter, r *http.Request) {
 	apiCfg := &apiConfig{}
@@ -55,9 +49,9 @@ func validateChirp(w http.ResponseWriter, r *http.Request) {
 	type errStruct struct {
 		Error string `json:"error"`
 	}
-	type validMsg struct {
-		Valid bool `json:"valid"`
-	}
+	// type validMsg struct {
+	// 	Valid bool `json:"valid"`
+	// }
 	decoder := json.NewDecoder(r.Body)
 	params := chirp{}
 	err := decoder.Decode(&params)
@@ -87,18 +81,6 @@ func validateChirp(w http.ResponseWriter, r *http.Request) {
 			cleanedArr[i] = "****"
 		}
 	}
-	// if profanCheck {
-	// 	cleanedText := profaneChirp{
-	// 		Cleaned_Body: strings.Join(cleanedArr, " "),
-	// 	}
-	// 	cleandata, err := json.Marshal(cleanedText)
-	// 	if err != nil {
-	// 		log.Printf("Error marshalling json: %s", err)
-	// 	}
-	// 	w.WriteHeader(200)
-	// 	w.Write(cleandata)
-	// 	return
-	// }
 	
 	validation := profaneChirp {
 		Cleaned_Body: strings.Join(cleanedArr, " "),
@@ -118,8 +100,15 @@ func healthRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatal("unable to connect to the database: ", err)
+	}
+	dbQueries := databases.New(db)
 	mux := http.NewServeMux()
-	apiCfg := &apiConfig{}
+	apiCfg := &apiConfig{dbQueries: dbQueries}
 	rootHandler := http.StripPrefix("/app", http.FileServer(http.Dir(".")))
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(rootHandler))
 	mux.Handle("/assets/", apiCfg.middlewareMetricsInc(http.FileServer(http.Dir("./assets/"))))
@@ -133,7 +122,7 @@ func main() {
 		Addr: ":8080",
 		Handler: mux,
 	}
-	err := server.ListenAndServe() 
+	err = server.ListenAndServe() 
     if err != nil {
         fmt.Println("Error starting server:", err)
     }
