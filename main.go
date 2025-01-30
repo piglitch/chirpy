@@ -30,10 +30,11 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler{
 	})
 }
 
-func displayServerHits(w http.ResponseWriter, r *http.Request) {
-	apiCfg := &apiConfig{}
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(fmt.Sprintf("<html><body> <h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>",apiCfg.fileServerHits.Load())))
+func displayServerHits(apiCfg *apiConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(fmt.Sprintf("<html><body> <h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>",apiCfg.fileServerHits.Load())))
+	}
 }
 
 func resetDB(apiCfg *apiConfig) http.HandlerFunc {
@@ -41,82 +42,95 @@ func resetDB(apiCfg *apiConfig) http.HandlerFunc {
 		Status string `json:"status"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-			if apiCfg.platform != "dev" {
-					w.WriteHeader(http.StatusForbidden)
-					return
-			}
-			_, err := apiCfg.dbQueries.DeleteUser(r.Context())
-			if err != nil {
-					log.Printf("Error executing query: %s", err)
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-			}
-			responseMsg := respMsg{
-				Status: "reset done",
-			}
-			marshalledMsg, err := json.Marshal(responseMsg)
-			if err != nil {
-				log.Printf("Error while marshalling: %s", err)
-			}
-			w.WriteHeader(http.StatusOK)
-			w.Write(marshalledMsg)
+		if apiCfg.platform != "dev" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+		}
+		_, err := apiCfg.dbQueries.DeleteUser(r.Context())
+		if err != nil {
+				log.Printf("Error executing query: %s", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+		}
+		responseMsg := respMsg{
+			Status: "reset done",
+		}
+		marshalledMsg, err := json.Marshal(responseMsg)
+		if err != nil {
+			log.Printf("Error while marshalling: %s", err)
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write(marshalledMsg)
 	}
 }
 
-
-func validateChirp(w http.ResponseWriter, r *http.Request) {
-
-	type chirp struct {
-		Body string `json:"body"`
+func createChirp(apiCfg *apiConfig) http.HandlerFunc {
+	type Chirp struct {
+		Id        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string    `json:"body"`
+		UserId    uuid.UUID `json:"user_id"`
 	}
-	type profaneChirp struct {
-		Cleaned_Body string `json:"cleaned_body"`
-	}
+
 	type errStruct struct {
 		Error string `json:"error"`
 	}
-	// type validMsg struct {
-	// 	Valid bool `json:"valid"`
-	// }
-	decoder := json.NewDecoder(r.Body)
-	params := chirp{}
-	err := decoder.Decode(&params)
-	if err != nil {
-		log.Printf("Error decoding parameters: %s", err)
-		w.WriteHeader(500)
-		return
-	}
-	msg := params.Body
-	if len(msg) > 140 {
-		log.Printf("Chirp too long")
-		errorMsg := errStruct{
-			Error: "Chirp is too long",
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		decoder := json.NewDecoder(r.Body)
+		params := Chirp{}
+		err := decoder.Decode(&params)
+		if err != nil {
+			log.Printf("Error decoding parameters: %s", err)
+			w.WriteHeader(500)
+			return
 		}
-		data, err := json.Marshal(errorMsg)  
+		msg := params.Body
+		if len(msg) > 140 {
+			log.Printf("Chirp too long")
+			errorMsg := errStruct{
+				Error: "Chirp is too long",
+			}
+			data, err := json.Marshal(errorMsg)  
+			if err != nil {
+				log.Printf("Error marshalling json: %s", err)
+			}
+			w.WriteHeader(400)
+			w.Write(data)
+			return
+		}
+		cleanedArr := strings.Split(msg, " ")
+		
+		for i := 0; i < len(cleanedArr); i++ {
+			if strings.ToLower(cleanedArr[i]) == "kerfuffle" || strings.ToLower(cleanedArr[i]) == "sharbert" || strings.ToLower(cleanedArr[i]) == "fornax" {
+				cleanedArr[i] = "****"
+			}
+		}
+		
+		validation := databases.CreateChirpParams{
+			Body: strings.Join(cleanedArr, " "),
+			UserID: params.UserId,
+		}
+
+		newChirp, err := apiCfg.dbQueries.CreateChirp(r.Context(), validation)
+		if err != nil {
+			log.Printf("Error executing query: %s", err)
+		}
+		responseChirp := Chirp{
+			Id: newChirp.ID,
+			CreatedAt: newChirp.CreatedAt,
+			UpdatedAt: newChirp.UpdatedAt,
+			Body: newChirp.Body,
+			UserId: newChirp.UserID,
+		}
+		marshalledChirp, err := json.Marshal(responseChirp)
 		if err != nil {
 			log.Printf("Error marshalling json: %s", err)
 		}
-		w.WriteHeader(400)
-		w.Write(data)
-		return
+		w.WriteHeader(http.StatusCreated)
+		w.Write(marshalledChirp)
 	}
-	cleanedArr := strings.Split(msg, " ")
-	
-	for i := 0; i < len(cleanedArr); i++ {
-		if strings.ToLower(cleanedArr[i]) == "kerfuffle" || strings.ToLower(cleanedArr[i]) == "sharbert" || strings.ToLower(cleanedArr[i]) == "fornax" {
-			cleanedArr[i] = "****"
-		}
-	}
-	
-	validation := profaneChirp {
-		Cleaned_Body: strings.Join(cleanedArr, " "),
-	}
-	validdata, err := json.Marshal(validation)
-	if err != nil {
-		log.Printf("Error marshalling json: %s", err)
-	}
-	w.WriteHeader(200)
-	w.Write(validdata)
 }
 
 func healthRoute(w http.ResponseWriter, r *http.Request) {
@@ -181,10 +195,10 @@ func main() {
 	mux.Handle("/assets/", apiCfg.middlewareMetricsInc(http.FileServer(http.Dir("./assets/"))))
 
 	mux.HandleFunc("GET /api/healthz", healthRoute)
-	mux.HandleFunc("GET /admin/metrics", displayServerHits)
+	mux.HandleFunc("GET /admin/metrics", displayServerHits(apiCfg))
 	mux.HandleFunc("POST /admin/reset", resetDB(apiCfg))
-	mux.HandleFunc("POST /api/validate_chirp", validateChirp)
 	mux.HandleFunc("POST /api/users", createUser(apiCfg))
+	mux.HandleFunc("POST /api/chirps", createChirp(apiCfg))
 
 	server := &http.Server{
 		Addr: ":8080",
