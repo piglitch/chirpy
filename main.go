@@ -116,6 +116,7 @@ func createChirp(apiCfg *apiConfig) http.HandlerFunc {
 		newChirp, err := apiCfg.dbQueries.CreateChirp(r.Context(), validation)
 		if err != nil {
 			log.Printf("Error executing query: %s", err)
+			return
 		}
 		responseChirp := Chirp{
 			Id: newChirp.ID,
@@ -124,9 +125,11 @@ func createChirp(apiCfg *apiConfig) http.HandlerFunc {
 			Body: newChirp.Body,
 			UserId: newChirp.UserID,
 		}
+
 		marshalledChirp, err := json.Marshal(responseChirp)
 		if err != nil {
 			log.Printf("Error marshalling json: %s", err)
+			return
 		}
 		w.WriteHeader(http.StatusCreated)
 		w.Write(marshalledChirp)
@@ -160,6 +163,7 @@ func createUser(apiCfg *apiConfig) http.HandlerFunc {
 		user, err := apiCfg.dbQueries.CreateUser(r.Context(), params.Email)
 		if err != nil {
 			log.Printf("Error executing query: %s", err)
+			return
 		}
 		newUser := User{
 			ID: user.ID,
@@ -170,10 +174,56 @@ func createUser(apiCfg *apiConfig) http.HandlerFunc {
 		marshalledNewUser, err := json.Marshal(newUser)
 		if err != nil {
 			log.Printf("error in marshalling: %s", err)
+			return
 		}
 		w.WriteHeader(http.StatusCreated)
 		w.Write(marshalledNewUser)
 	}	
+}
+
+func getAllChirps(apiCfg *apiConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		type Chirp struct {
+			Id        uuid.UUID `json:"id"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+			Body      string    `json:"body"`
+			UserId    uuid.UUID `json:"user_id"`
+		}
+
+		// decoder := json.NewDecoder(r.Body)
+		// params := Chirp{}
+		// err := decoder.Decode(&params)
+		
+		// if err != nil {
+		// 	log.Printf("Error while decoding: %s", err)
+		// 	w.WriteHeader(500)
+		// 	return
+		// }
+		chirps, err := apiCfg.dbQueries.GetAllChirps(r.Context())
+		if err != nil {
+			log.Printf("Error while executing sql query: %s", err)
+			return
+		}
+		chirpsResponse := []Chirp{}
+		for _, chirp := range chirps {
+			chirpResponse := Chirp{
+				Id: chirp.ID,
+				CreatedAt: chirp.CreatedAt,
+				UpdatedAt: chirp.UpdatedAt,
+				Body: chirp.Body,
+				UserId: chirp.UserID,
+			}
+			chirpsResponse = append(chirpsResponse, chirpResponse)
+		}
+		marshalledChirps, err := json.Marshal(chirpsResponse)
+		if err != nil {
+			log.Printf("Error marshalling chirps: %s", err)
+			return 
+		}	
+		w.WriteHeader(200)
+		w.Write(marshalledChirps)
+	}
 }
 
 func main() {
@@ -199,6 +249,7 @@ func main() {
 	mux.HandleFunc("POST /admin/reset", resetDB(apiCfg))
 	mux.HandleFunc("POST /api/users", createUser(apiCfg))
 	mux.HandleFunc("POST /api/chirps", createChirp(apiCfg))
+	mux.HandleFunc("GET /api/chirps", getAllChirps(apiCfg))
 
 	server := &http.Server{
 		Addr: ":8080",
