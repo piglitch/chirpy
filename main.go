@@ -191,15 +191,6 @@ func getAllChirps(apiCfg *apiConfig) http.HandlerFunc {
 			UserId    uuid.UUID `json:"user_id"`
 		}
 
-		// decoder := json.NewDecoder(r.Body)
-		// params := Chirp{}
-		// err := decoder.Decode(&params)
-		
-		// if err != nil {
-		// 	log.Printf("Error while decoding: %s", err)
-		// 	w.WriteHeader(500)
-		// 	return
-		// }
 		chirps, err := apiCfg.dbQueries.GetAllChirps(r.Context())
 		if err != nil {
 			log.Printf("Error while executing sql query: %s", err)
@@ -221,8 +212,46 @@ func getAllChirps(apiCfg *apiConfig) http.HandlerFunc {
 			log.Printf("Error marshalling chirps: %s", err)
 			return 
 		}	
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
 		w.Write(marshalledChirps)
+	}
+}
+
+func getChirpById(apiCfg *apiConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		type Chirp struct {
+			Id        uuid.UUID `json:"id"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+			Body      string    `json:"body"`
+			UserId    uuid.UUID `json:"user_id"`
+		}
+
+		chirpId, err := uuid.Parse(r.PathValue("chirpID")) 
+		if err != nil {
+			log.Printf("Unable to parse chirpId: %s", err)
+			return
+		}
+		chirp, err := apiCfg.dbQueries.GetChirpById(r.Context(), chirpId)
+		if err != nil {
+			log.Printf("failed to execute sql query: %s", err)
+		}
+		chirpResp := Chirp{
+			Id: chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body: chirp.Body,
+			UserId: chirp.UserID,
+		}
+		marshalledResp, err := json.Marshal(chirpResp)
+		if err != nil {
+			log.Printf("Failed to unmarshal: %s", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write(marshalledResp)
 	}
 }
 
@@ -250,6 +279,7 @@ func main() {
 	mux.HandleFunc("POST /api/users", createUser(apiCfg))
 	mux.HandleFunc("POST /api/chirps", createChirp(apiCfg))
 	mux.HandleFunc("GET /api/chirps", getAllChirps(apiCfg))
+	mux.HandleFunc("GET /api/chirps/{chirpID}", getChirpById(apiCfg))
 
 	server := &http.Server{
 		Addr: ":8080",
