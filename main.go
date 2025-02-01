@@ -159,10 +159,22 @@ func createUser(apiCfg *apiConfig) http.HandlerFunc {
 			UpdatedAt time.Time `json:"updated_at"`
 			Email string `json:"email"`
 		}
+		type errMsg struct{
+			Body string `json:"body"`
+		}
 		decoder := json.NewDecoder(r.Body)
 		params := User{}
 		err := decoder.Decode(&params)
-
+		if len(params.Hashed_Pass) == 0 {
+			marshalledErr, err := json.Marshal(errMsg{Body: "Must include a password"})
+			if err != nil {
+				log.Printf("Error marshalling: %s", err)
+				return
+			}	
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write(marshalledErr)
+			return
+		}
 		if err != nil {
 			log.Printf("Error decoding parameters: %s", err)
 			w.WriteHeader(500)
