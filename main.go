@@ -343,20 +343,10 @@ func userLogin(apiCfg *apiConfig) http.HandlerFunc {
 	}
 }
 
-func MakeJWT(apiCfg *apiConfig, userId uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
 
-	claims := &jwt.RegisteredClaims{
-		ExpiresAt: jwt.NewNumericDate(time.Unix(int64(expiresIn.Seconds()), 0)),
-		Issuer: "test",
-		IssueAt: "chirp",
-		ExpireAt: "",
-	}
-	token := jwt.NewNumericDate(jwt.SigningMethodHS256, claims)
-	ss, err := token.SignedString([]byte(tokenSecret))
-	if err != nil {
-		return ss, err
-	}
-	return ss, nil
+
+func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
+	token, err := jwt.ParseWithClaims(tokenString, tokenSecret)
 }
 
 func main() {
