@@ -11,6 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/golang-jwt/jwt"
+	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -338,6 +341,22 @@ func userLogin(apiCfg *apiConfig) http.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 		w.Write(marshalledResp)
 	}
+}
+
+func MakeJWT(apiCfg *apiConfig, userId uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
+
+	claims := &jwt.RegisteredClaims{
+		ExpiresAt: jwt.NewNumericDate(time.Unix(int64(expiresIn.Seconds()), 0)),
+		Issuer: "test",
+		IssueAt: "chirp",
+		ExpireAt: "",
+	}
+	token := jwt.NewNumericDate(jwt.SigningMethodHS256, claims)
+	ss, err := token.SignedString([]byte(tokenSecret))
+	if err != nil {
+		return ss, err
+	}
+	return ss, nil
 }
 
 func main() {
