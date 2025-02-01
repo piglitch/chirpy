@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+
+	auth "main.go/internal"
 	"main.go/internal/databases"
 )
 
@@ -149,8 +151,14 @@ func createUser(apiCfg *apiConfig) http.HandlerFunc {
 			CreatedAt time.Time `json:"created_at"`
 			UpdatedAt time.Time `json:"updated_at"`
 			Email string `json:"email"`
+			Hashed_Pass string `json:"password"`
 		}
-
+		type UserResp struct{
+			ID uuid.UUID `json:"id"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+			Email string `json:"email"`
+		}
 		decoder := json.NewDecoder(r.Body)
 		params := User{}
 		err := decoder.Decode(&params)
@@ -160,12 +168,21 @@ func createUser(apiCfg *apiConfig) http.HandlerFunc {
 			w.WriteHeader(500)
 			return
 		}
-		user, err := apiCfg.dbQueries.CreateUser(r.Context(), params.Email)
+		hashed_pass, err := auth.HashPassword(params.Hashed_Pass) 
+		if err != nil {
+			log.Printf("Error while hashing password: %s", err)
+			return
+		}
+		userWpass := databases.CreateUserParams{
+			Email: params.Email,
+			HashedPassword: hashed_pass,
+		}
+		user, err := apiCfg.dbQueries.CreateUser(r.Context(), userWpass)
 		if err != nil {
 			log.Printf("Error executing query: %s", err)
 			return
 		}
-		newUser := User{
+		newUser := UserResp{
 			ID: user.ID,
 			CreatedAt: user.CreatedAt,
 			UpdatedAt: user.UpdatedAt,
@@ -255,6 +272,62 @@ func getChirpById(apiCfg *apiConfig) http.HandlerFunc {
 	}
 }
 
+func userLogin(apiCfg *apiConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		type User struct{
+			Email string `json:"email"`
+			Hashed_Pass string `json:"password"`
+		}
+		decoder := json.NewDecoder(r.Body)
+		params := User{}
+		err := decoder.Decode(&params)
+		if err != nil {
+			log.Printf("Error decodinng params: %s", err)
+			return
+		}
+		dbUser, err := apiCfg.dbQueries.GetUserByEmail(r.Context(), params.Email)
+		if err != nil {
+			log.Printf("failed executing query: %s", err)
+			return 
+		}
+		tryPassword := params.Hashed_Pass
+		log.Print(287, params)
+		dbPassword, err := apiCfg.dbQueries.GetPassword(r.Context(), params.Email)
+		if err != nil {
+			log.Printf("Error executing query: %s on Line 289", err)
+			return
+		}
+		log.Print(300, dbPassword)
+		err = auth.CheckPasswordHash(tryPassword, dbPassword)
+		log.Print("err: ", err)
+		if err != nil {
+			w.WriteHeader(401)
+			w.Write([]byte("Incorrect email or password"))
+			return
+		}
+		type UserResp struct{
+			ID uuid.UUID `json:"id"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+			Email string `json:"email"`
+			Hashed_Pass string `json:"password"`
+		}
+		respUser := UserResp{
+			ID: dbUser.ID,
+			CreatedAt: dbUser.CreatedAt,
+			UpdatedAt: dbUser.UpdatedAt,
+			Email: params.Email,
+		}
+		marshalledResp, err := json.Marshal(respUser)
+		if err != nil {
+			log.Printf("Error marshalling response: %s", err)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write(marshalledResp)
+	}
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -280,6 +353,7 @@ func main() {
 	mux.HandleFunc("POST /api/chirps", createChirp(apiCfg))
 	mux.HandleFunc("GET /api/chirps", getAllChirps(apiCfg))
 	mux.HandleFunc("GET /api/chirps/{chirpID}", getChirpById(apiCfg))
+	mux.HandleFunc("POST /api/login", userLogin(apiCfg))
 
 	server := &http.Server{
 		Addr: ":8080",
