@@ -20,10 +20,6 @@ func HashPassword(password string) (string, error) {
 }
 
 func CheckPasswordHash(password, hash string) error {
-	// hash_byte, err := HashPassword(password) 
-	// if err != nil {
-	// 	return err
-	// }
 	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 	if err != nil {
 		return err
@@ -32,17 +28,34 @@ func CheckPasswordHash(password, hash string) error {
 }
 
 func MakeJWT(userId uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
-	
 	claims := &jwt.RegisteredClaims{
 		Issuer: "chirpy",
-		IssuedAt: "",
-		ExpiresAt: jwt.NewNumericDate(time.Unix(int64(expiresIn.Seconds()), 0)),
-		Subject: userId,
+		IssuedAt: jwt.NewNumericDate(time.Now()),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiresIn)),
+		Subject: userId.String(),
 	}
-	token := jwt.NewNumericDate(jwt.SigningMethodHS256, claims)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	ss, err := token.SignedString([]byte(tokenSecret))
 	if err != nil {
 		return ss, err
 	}
 	return ss, nil
+}
+
+func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
+	type MyCustomClaims struct{
+		Id uuid.UUID `json:"id"`
+		jwt.RegisteredClaims
+	}
+	token, err := jwt.ParseWithClaims(tokenString, MyCustomClaims{}, func(token *jwt.Token)(interface{}, error){
+		return []byte(tokenSecret), nil
+	})
+	if err != nil {
+		log.Printf("Error retrieving the token: %s", err)
+		return uuid.Nil, err
+	}
+	if claims, ok := token.Claims.(*MyCustomClaims); ok && token.Valid {
+		return claims.Id, nil
+	} 
+	return uuid.Nil, nil
 }

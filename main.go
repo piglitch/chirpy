@@ -10,10 +10,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-
-	"github.com/golang-jwt/jwt"
-	"github.com/golang-jwt/jwt/v4"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -341,12 +337,6 @@ func userLogin(apiCfg *apiConfig) http.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 		w.Write(marshalledResp)
 	}
-}
-
-
-
-func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
-	token, err := jwt.ParseWithClaims(tokenString, tokenSecret)
 }
 
 func main() {
