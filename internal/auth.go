@@ -4,7 +4,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -47,7 +47,7 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 		Id uuid.UUID `json:"id"`
 		jwt.RegisteredClaims
 	}
-	token, err := jwt.ParseWithClaims(tokenString, MyCustomClaims{}, func(token *jwt.Token)(interface{}, error){
+	token, err := jwt.ParseWithClaims(tokenString, &MyCustomClaims{}, func(token *jwt.Token)(interface{}, error){
 		return []byte(tokenSecret), nil
 	})
 	if err != nil {
@@ -59,3 +59,4 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	} 
 	return uuid.Nil, nil
 }
+
