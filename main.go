@@ -22,6 +22,7 @@ type apiConfig struct {
 	fileServerHits atomic.Int32
 	dbQueries *databases.Queries
 	platform string
+	jwtSecret string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler{
@@ -78,10 +79,24 @@ func createChirp(apiCfg *apiConfig) http.HandlerFunc {
 		Error string `json:"error"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-
+		log.Print("r.Header: ", r.Header)
+		cleanedTokenString, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			log.Printf("Error cleaning the bearer token: %s", err)
+			w.WriteHeader(401)
+			return
+		}
+		
+		log.Print(cleanedTokenString, 89)
+		userId, err := auth.ValidateJWT(cleanedTokenString, apiCfg.jwtSecret)
+		if err != nil {
+			log.Printf("Invalid token: %s. Line: %d", err, 92)
+			w.WriteHeader(401)
+			return
+		}
 		decoder := json.NewDecoder(r.Body)
 		params := Chirp{}
-		err := decoder.Decode(&params)
+		err = decoder.Decode(&params)
 		if err != nil {
 			log.Printf("Error decoding parameters: %s", err)
 			w.WriteHeader(500)
@@ -111,12 +126,13 @@ func createChirp(apiCfg *apiConfig) http.HandlerFunc {
 		
 		validation := databases.CreateChirpParams{
 			Body: strings.Join(cleanedArr, " "),
-			UserID: params.UserId,
+			UserID: userId,
 		}
 
 		newChirp, err := apiCfg.dbQueries.CreateChirp(r.Context(), validation)
 		if err != nil {
 			log.Printf("Error executing query: %s", err)
+			w.WriteHeader(500)
 			return
 		}
 		responseChirp := Chirp{
@@ -288,6 +304,7 @@ func userLogin(apiCfg *apiConfig) http.HandlerFunc {
 		type User struct{
 			Email string `json:"email"`
 			Hashed_Pass string `json:"password"`
+			Expiry int `json:"expiry_in_seconds"`
 		}
 		decoder := json.NewDecoder(r.Body)
 		params := User{}
@@ -316,18 +333,35 @@ func userLogin(apiCfg *apiConfig) http.HandlerFunc {
 			w.Write([]byte("Incorrect email or password"))
 			return
 		}
+		def_expiry := 3600 
+		if params.Expiry != 0 {
+			def_expiry = params.Expiry 
+		}
+		tokenString, err := auth.MakeJWT(dbUser.ID, apiCfg.jwtSecret, time.Duration(def_expiry)*time.Second)
+		if err != nil {
+			log.Printf("Error genearting jwt: %s", err)
+			return
+		}
+		log.Print("token string: ", tokenString)
+		_, err = auth.ValidateJWT(tokenString, apiCfg.jwtSecret)
+		if err != nil {
+			log.Printf("Error validating token: %s. Line: %d", err, 347)
+			return
+		}
 		type UserResp struct{
 			ID uuid.UUID `json:"id"`
 			CreatedAt time.Time `json:"created_at"`
 			UpdatedAt time.Time `json:"updated_at"`
 			Email string `json:"email"`
 			Hashed_Pass string `json:"password"`
+			Token string `json:"token"`
 		}
 		respUser := UserResp{
 			ID: dbUser.ID,
 			CreatedAt: dbUser.CreatedAt,
 			UpdatedAt: dbUser.UpdatedAt,
 			Email: params.Email,
+			Token: tokenString,
 		}
 		marshalledResp, err := json.Marshal(respUser)
 		if err != nil {
@@ -342,6 +376,7 @@ func userLogin(apiCfg *apiConfig) http.HandlerFunc {
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
+	jWTSecret := os.Getenv("JWT_SECRET") 
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatal("unable to connect to the database: ", err)
@@ -352,6 +387,7 @@ func main() {
 	apiCfg := &apiConfig{
 		dbQueries: dbQueries,
 		platform: platform,
+		jwtSecret: jWTSecret,
 	}
 	rootHandler := http.StripPrefix("/app", http.FileServer(http.Dir(".")))
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(rootHandler))

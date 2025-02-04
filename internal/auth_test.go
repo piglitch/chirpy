@@ -23,3 +23,15 @@ func TestJWTValidation(t *testing.T){
 	}
 	t.Log(tokenId)
 }
+
+func TestHeaders(t *testing.T){
+	Header := map[string][]string{
+    "Authorization": {"Bearer token_string"},
+	}
+	cleanStr, err := GetBearerToken(Header)
+	if err != nil {
+		t.Logf("could not clean headers: %s", err)
+	}
+	t.Log(cleanStr)
+}
+

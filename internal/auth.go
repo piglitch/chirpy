@@ -47,29 +47,41 @@ func MakeJWT(userId uuid.UUID, tokenSecret string, expiresIn time.Duration) (str
 
 func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	type MyCustomClaims struct{
-		Id uuid.UUID `json:"id"`
 		jwt.RegisteredClaims
 	}
+
 	token, err := jwt.ParseWithClaims(tokenString, &MyCustomClaims{}, func(token *jwt.Token)(interface{}, error){
+		log.Print("55 token parse with claims", token, tokenSecret)
 		return []byte(tokenSecret), nil
 	})
 	if err != nil {
 		log.Printf("Error retrieving the token: %s", err)
 		return uuid.Nil, err
 	}
-	if claims, ok := token.Claims.(*MyCustomClaims); ok && token.Valid {
-		return claims.Id, nil
+	claims, ok := token.Claims.(*MyCustomClaims)
+	if !ok && !token.Valid {
+		log.Print(claims, token.Valid, " validate 62")
+		return uuid.Nil, nil
 	} 
-	return uuid.Nil, nil
+	id, err := uuid.Parse(claims.Subject)
+	if err != nil {
+		log.Printf("failed to parse: %s", err)
+		return uuid.Nil, err
+	}
+	return id, nil
 }
 
 func GetBearerToken(headers http.Header)(string, error){
 	if headers == nil {
-		return "", errors.New("No headers were sent")
+		return "", errors.New("no headers were sent")
 	}
 	bearerString := headers.Get("Authorization")
 	strippedString := bearerString[6:]
 	cleanStringArray := strings.Split(strippedString, " ") 
 	cleanedString := strings.Join(cleanStringArray, "")
+	log.Print(bearerString, 74)
+	log.Print(strippedString, 75)
+	log.Print(cleanStringArray, 76)
+	log.Print(cleanedString, 77)
 	return cleanedString, nil
 }
