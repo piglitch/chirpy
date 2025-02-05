@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -304,13 +305,18 @@ func userLogin(apiCfg *apiConfig) http.HandlerFunc {
 		type User struct{
 			Email string `json:"email"`
 			Hashed_Pass string `json:"password"`
-			Expiry int `json:"expiry_in_seconds"`
 		}
 		decoder := json.NewDecoder(r.Body)
 		params := User{}
 		err := decoder.Decode(&params)
 		if err != nil {
 			log.Printf("Error decodinng params: %s", err)
+			w.WriteHeader(401)
+			return
+		}
+		log.Print("params line 316: ", params)
+		if params.Email == "" || params.Hashed_Pass == "" {
+			w.WriteHeader(401)
 			return
 		}
 		dbUser, err := apiCfg.dbQueries.GetUserByEmail(r.Context(), params.Email)
@@ -319,35 +325,55 @@ func userLogin(apiCfg *apiConfig) http.HandlerFunc {
 			return 
 		}
 		tryPassword := params.Hashed_Pass
-		log.Print(287, params)
 		dbPassword, err := apiCfg.dbQueries.GetPassword(r.Context(), params.Email)
 		if err != nil {
 			log.Printf("Error executing query: %s on Line 289", err)
 			return
 		}
-		log.Print(300, dbPassword)
 		err = auth.CheckPasswordHash(tryPassword, dbPassword)
-		log.Print("err: ", err)
 		if err != nil {
 			w.WriteHeader(401)
 			w.Write([]byte("Incorrect email or password"))
 			return
 		}
 		def_expiry := 3600 
-		if params.Expiry != 0 {
-			def_expiry = params.Expiry 
-		}
 		tokenString, err := auth.MakeJWT(dbUser.ID, apiCfg.jwtSecret, time.Duration(def_expiry)*time.Second)
 		if err != nil {
 			log.Printf("Error genearting jwt: %s", err)
 			return
 		}
-		log.Print("token string: ", tokenString)
 		_, err = auth.ValidateJWT(tokenString, apiCfg.jwtSecret)
 		if err != nil {
 			log.Printf("Error validating token: %s. Line: %d", err, 347)
 			return
 		}
+		// Refresh tokens
+		type RefreshTokenParams struct {
+			Token     string
+			UserID    uuid.UUID
+			ExpiresAt time.Time
+			RevokedAt sql.NullTime
+		}
+		refreshToken, err := auth.MakeRefreshToken()
+		if err != nil {
+			log.Printf("Error creating refresh token: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		newRefreshToken := RefreshTokenParams{
+			Token: refreshToken,
+			UserID: dbUser.ID,
+			ExpiresAt: time.Now().Add(1460 * time.Hour),
+			RevokedAt: sql.NullTime{},
+		}
+		dbRefreshToken, err := apiCfg.dbQueries.CreateRefreshToken(r.Context(), databases.CreateRefreshTokenParams(newRefreshToken))
+		if err != nil {
+			log.Printf("Error getting refresh tokes from the db: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		// End of Refresh tokens
+
 		type UserResp struct{
 			ID uuid.UUID `json:"id"`
 			CreatedAt time.Time `json:"created_at"`
@@ -355,6 +381,7 @@ func userLogin(apiCfg *apiConfig) http.HandlerFunc {
 			Email string `json:"email"`
 			Hashed_Pass string `json:"password"`
 			Token string `json:"token"`
+			RefreshToken string `json:"refresh_token"`
 		}
 		respUser := UserResp{
 			ID: dbUser.ID,
@@ -362,6 +389,7 @@ func userLogin(apiCfg *apiConfig) http.HandlerFunc {
 			UpdatedAt: dbUser.UpdatedAt,
 			Email: params.Email,
 			Token: tokenString,
+			RefreshToken: dbRefreshToken.Token,
 		}
 		marshalledResp, err := json.Marshal(respUser)
 		if err != nil {
@@ -370,6 +398,96 @@ func userLogin(apiCfg *apiConfig) http.HandlerFunc {
 		}
 		w.WriteHeader(http.StatusOK)
 		w.Write(marshalledResp)
+	}
+}
+
+func findRefreshToken(apiCfg *apiConfig ) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		type RefreshToken struct {
+			Token string `json:"token"`
+		}
+		token, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			log.Printf("Error getting the bearer token: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		log.Printf("token line 415 ////////// ////////: %s", token)
+		dbToken, err := apiCfg.dbQueries.GetRefreshToken(r.Context(), token)
+		if err != nil {
+			log.Printf("error loading refresh token from db: %s", err)
+			w.WriteHeader(401)
+			return
+		}
+		if dbToken.RevokedAt.Valid  {
+			log.Printf("Token revoked")
+			w.WriteHeader(401)
+			return
+		}
+		expired := dbToken.ExpiresAt.Before(time.Now())
+		if expired {
+			log.Printf("token expired")
+			w.WriteHeader(401)
+		}
+
+		userId, err := apiCfg.dbQueries.GetUserFromToken(r.Context(), dbToken.Token)
+		if err != nil {
+			log.Printf("failed to get user id from db: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		def_expiry := 3600 
+		tokenString, err := auth.MakeJWT(userId, apiCfg.jwtSecret, time.Duration(def_expiry)*time.Second)
+		if err != nil {
+			log.Printf("Error genearting jwt: %s", err)
+			return
+		}
+		_, err = auth.ValidateJWT(tokenString, apiCfg.jwtSecret)
+		if err != nil {
+			log.Printf("error validating jwt: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		respToken := RefreshToken{
+			Token: tokenString,
+		}
+		marshalledResp, err := json.Marshal(respToken)
+		if err != nil {
+			log.Printf("error marshalling response: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		w.Write(marshalledResp)
+		w.WriteHeader(200)
+	}
+}
+
+func revokeToken(apiCfg *apiConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			log.Printf("Error getting the headers: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		dbToken, err := apiCfg.dbQueries.GetRefreshToken(r.Context(), token)
+		expired := dbToken.ExpiresAt.Before(time.Now())
+		if expired {
+			log.Printf("token expired")
+			w.WriteHeader(401)
+		}
+		if err != nil {
+			log.Printf("error loading refresh token from db: %s", err)
+			w.WriteHeader(401)
+			return
+		}
+		err = apiCfg.dbQueries.RevokeToken(r.Context(), dbToken.Token)
+		if err != nil {
+			log.Printf("Failed to revoke token: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		w.WriteHeader(204)
 	}
 }
 
@@ -401,6 +519,8 @@ func main() {
 	mux.HandleFunc("GET /api/chirps", getAllChirps(apiCfg))
 	mux.HandleFunc("GET /api/chirps/{chirpID}", getChirpById(apiCfg))
 	mux.HandleFunc("POST /api/login", userLogin(apiCfg))
+	mux.HandleFunc("POST /api/refresh", findRefreshToken(apiCfg))
+	mux.HandleFunc("POST /api/revoke", revokeToken(apiCfg))
 
 	server := &http.Server{
 		Addr: ":8080",
@@ -408,6 +528,6 @@ func main() {
 	}
 	err = server.ListenAndServe() 
     if err != nil {
-        fmt.Println("Error starting server:", err)
+      fmt.Println("Error starting server:", err)
     }
 }
