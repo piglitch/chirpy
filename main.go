@@ -412,6 +412,7 @@ func findRefreshToken(apiCfg *apiConfig ) http.HandlerFunc {
 			w.WriteHeader(500)
 			return
 		}
+		
 		log.Printf("token line 415 ////////// ////////: %s", token)
 		dbToken, err := apiCfg.dbQueries.GetRefreshToken(r.Context(), token)
 		if err != nil {
