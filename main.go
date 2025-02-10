@@ -80,7 +80,6 @@ func createChirp(apiCfg *apiConfig) http.HandlerFunc {
 		Error string `json:"error"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Print("r.Header: ", r.Header)
 		cleanedTokenString, err := auth.GetBearerToken(r.Header)
 		if err != nil {
 			log.Printf("Error cleaning the bearer token: %s", err)
@@ -88,7 +87,6 @@ func createChirp(apiCfg *apiConfig) http.HandlerFunc {
 			return
 		}
 		
-		log.Print(cleanedTokenString, 89)
 		userId, err := auth.ValidateJWT(cleanedTokenString, apiCfg.jwtSecret)
 		if err != nil {
 			log.Printf("Invalid token: %s. Line: %d", err, 92)
@@ -492,6 +490,82 @@ func revokeToken(apiCfg *apiConfig) http.HandlerFunc {
 	}
 }
 
+func changeMailNpass(apiCfg *apiConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		type paramBody struct {
+			Password string `json:"password"`
+			Email string `json:"email"`
+		}
+		if r.Header == nil {
+			log.Printf("no header has been passed")
+			w.WriteHeader(401)
+			return
+		}
+		cleanedTokenString, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			log.Printf("Error cleaning the bearer token: %s", err)
+			w.WriteHeader(401)
+			return
+		}
+		userId, err := auth.ValidateJWT(cleanedTokenString, apiCfg.jwtSecret)
+		if err != nil {
+			log.Printf("Invalid token: %s. Line: %d", err, 92)
+			w.WriteHeader(401)
+			return
+		}
+		decoder := json.NewDecoder(r.Body)
+		params := paramBody{}
+		err = decoder.Decode(&params)
+		if err != nil {
+			log.Printf("Error decoding parameters: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		type UpdateUserParams struct {
+			Email          string
+			HashedPassword string
+			ID             uuid.UUID
+		}
+		hashedPass, err := auth.HashPassword(params.Password)
+		if err != nil {
+			log.Printf("Error hashing the password: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		updateUserParams := UpdateUserParams{
+			Email: params.Email,
+			HashedPassword: hashedPass,
+			ID: userId,
+		}
+		dbUser, err := apiCfg.dbQueries.UpdateUser(r.Context(), databases.UpdateUserParams(updateUserParams))
+		if err != nil {
+			log.Printf("Query unsuccessful: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		type postUserParams struct {
+			Id uuid.UUID `json:"id"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+			Email string `json:"email"`				
+		}
+		postUser := postUserParams{
+			Id: dbUser.ID,
+			CreatedAt: dbUser.CreatedAt,
+			UpdatedAt: dbUser.UpdatedAt,
+			Email: dbUser.Email, 
+		}
+		marshalledResp, err := json.Marshal(postUser)
+		if err != err {
+			log.Printf("error while marshalling rsponse: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		w.WriteHeader(200)
+		w.Write(marshalledResp)
+	}
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -522,6 +596,7 @@ func main() {
 	mux.HandleFunc("POST /api/login", userLogin(apiCfg))
 	mux.HandleFunc("POST /api/refresh", findRefreshToken(apiCfg))
 	mux.HandleFunc("POST /api/revoke", revokeToken(apiCfg))
+	mux.HandleFunc("PUT /api/users", changeMailNpass(apiCfg))
 
 	server := &http.Server{
 		Addr: ":8080",

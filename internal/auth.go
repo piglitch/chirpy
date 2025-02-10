@@ -78,6 +78,9 @@ func GetBearerToken(headers http.Header)(string, error){
 		return "", errors.New("no headers were sent")
 	}
 	bearerString := headers.Get("Authorization")
+	if len(bearerString) < 6 {
+		return "", errors.New("bad bearer token")
+	}
 	strippedString := bearerString[6:]
 	cleanStringArray := strings.Split(strippedString, " ") 
 	cleanedString := strings.Join(cleanStringArray, "")
