@@ -280,6 +280,11 @@ func getChirpById(apiCfg *apiConfig) http.HandlerFunc {
 		if err != nil {
 			log.Printf("failed to execute sql query: %s", err)
 		}
+		if chirp.ID == uuid.Nil {
+			log.Printf("chirp does not exist: %s", err)
+			w.WriteHeader(404)
+			return
+		}
 		chirpResp := Chirp{
 			Id: chirp.ID,
 			CreatedAt: chirp.CreatedAt,
@@ -566,6 +571,56 @@ func changeMailNpass(apiCfg *apiConfig) http.HandlerFunc {
 	}
 }
 
+func deleteChirp(apiCfg *apiConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cleanedTokenString, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			log.Printf("Error cleaning the bearer token: %s", err)
+			w.WriteHeader(401)
+			return
+		}
+		userId, err := auth.ValidateJWT(cleanedTokenString, apiCfg.jwtSecret)
+		if err != nil {
+			log.Printf("Invalid token: %s. Line: %d", err, 92)
+			w.WriteHeader(401)
+			return
+		}
+		chirpId, err := uuid.Parse(r.PathValue("chirpID")) 
+		if err != nil {
+			log.Printf("Unable to parse chirpId: %s", err)
+			return
+		}
+		userIdFromChirp, err := apiCfg.dbQueries.UserIdFromChirp(r.Context(), chirpId)
+		if err != nil {
+			log.Printf("error executing the query: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		if userIdFromChirp.String() != userId.String() {
+			w.WriteHeader(403)
+			return
+		}
+		chirp, err := apiCfg.dbQueries.GetChirpById(r.Context(), chirpId)
+		if err != nil {
+			log.Printf("error executing the query: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		log.Printf("line 604 %s", chirp.ID.String())
+		if chirp.ID == uuid.Nil {
+			log.Printf("Chirp does not exist: %s", err)
+			w.WriteHeader(404)
+		}
+		err = apiCfg.dbQueries.DeleteChirp(r.Context(), chirpId)
+		if err != nil {
+			log.Printf("Error executing query: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		w.WriteHeader(204)
+	}
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -597,6 +652,7 @@ func main() {
 	mux.HandleFunc("POST /api/refresh", findRefreshToken(apiCfg))
 	mux.HandleFunc("POST /api/revoke", revokeToken(apiCfg))
 	mux.HandleFunc("PUT /api/users", changeMailNpass(apiCfg))
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", deleteChirp(apiCfg))
 
 	server := &http.Server{
 		Addr: ":8080",
