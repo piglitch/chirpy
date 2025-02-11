@@ -10,7 +10,7 @@ import (
 )
 
 const deleteUser = `-- name: DeleteUser :one
- DELETE FROM users
+DELETE FROM users
 RETURNING id, created_at, updated_at, email, hashed_password, is_chirpy_red
 `
 

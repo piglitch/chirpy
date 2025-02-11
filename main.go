@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -238,11 +239,32 @@ func getAllChirps(apiCfg *apiConfig) http.HandlerFunc {
 			UserId    uuid.UUID `json:"user_id"`
 		}
 
-		chirps, err := apiCfg.dbQueries.GetAllChirps(r.Context())
-		if err != nil {
-			log.Printf("Error while executing sql query: %s", err)
-			return
+		chirps := []databases.Chirp{}
+
+		authorId := r.URL.Query().Get("author_id")
+		if authorId != "" {
+			authorIdUUID, err := uuid.Parse(authorId)
+			if err != nil {
+				w.WriteHeader(500)
+				return
+			}
+			chirpsByAuthor, err := apiCfg.dbQueries.GetChirpsByUSer(r.Context(), authorIdUUID)
+			if err != nil {
+				log.Printf("Error while executing sql query: %s", err)
+				return
+			}
+			chirps = append(chirps, chirpsByAuthor...)
 		}
+
+		if authorId == "" {
+			allChirps, err := apiCfg.dbQueries.GetAllChirps(r.Context())
+			if err != nil {
+				log.Printf("Error while executing sql query: %s", err)
+				return
+			}
+			chirps = append(chirps, allChirps...)
+		}
+
 		chirpsResponse := []Chirp{}
 		for _, chirp := range chirps {
 			chirpResponse := Chirp{
@@ -254,6 +276,13 @@ func getAllChirps(apiCfg *apiConfig) http.HandlerFunc {
 			}
 			chirpsResponse = append(chirpsResponse, chirpResponse)
 		}
+		
+		sortOrder := r.URL.Query().Get("sort")
+		if sortOrder == "desc" {
+			sort.Slice(chirpsResponse, func(i, j int) bool { return chirpsResponse[i].CreatedAt.After(chirpsResponse[j].CreatedAt) }) 
+		}
+
+
 		marshalledChirps, err := json.Marshal(chirpsResponse)
 		if err != nil {
 			log.Printf("Error marshalling chirps: %s", err)

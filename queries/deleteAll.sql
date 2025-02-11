@@ -1,3 +1,3 @@
 -- name: DeleteUser :one
- DELETE FROM users
+DELETE FROM users
 RETURNING *;
