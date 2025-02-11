@@ -172,6 +172,7 @@ func createUser(apiCfg *apiConfig) http.HandlerFunc {
 			CreatedAt time.Time `json:"created_at"`
 			UpdatedAt time.Time `json:"updated_at"`
 			Email string `json:"email"`
+			IsChirpyRed bool `json:"is_chirpy_red"`
 		}
 		type errMsg struct{
 			Body string `json:"body"`
@@ -202,6 +203,7 @@ func createUser(apiCfg *apiConfig) http.HandlerFunc {
 		userWpass := databases.CreateUserParams{
 			Email: params.Email,
 			HashedPassword: hashed_pass,
+
 		}
 		user, err := apiCfg.dbQueries.CreateUser(r.Context(), userWpass)
 		if err != nil {
@@ -213,6 +215,7 @@ func createUser(apiCfg *apiConfig) http.HandlerFunc {
 			CreatedAt: user.CreatedAt,
 			UpdatedAt: user.UpdatedAt,
 			Email: user.Email,
+			IsChirpyRed: user.IsChirpyRed.Bool,
 		}
 		marshalledNewUser, err := json.Marshal(newUser)
 		if err != nil {
@@ -385,6 +388,7 @@ func userLogin(apiCfg *apiConfig) http.HandlerFunc {
 			Hashed_Pass string `json:"password"`
 			Token string `json:"token"`
 			RefreshToken string `json:"refresh_token"`
+			IsChirpyRed bool `json:"is_chirpy_red"`
 		}
 		respUser := UserResp{
 			ID: dbUser.ID,
@@ -393,6 +397,7 @@ func userLogin(apiCfg *apiConfig) http.HandlerFunc {
 			Email: params.Email,
 			Token: tokenString,
 			RefreshToken: dbRefreshToken.Token,
+			IsChirpyRed: dbUser.IsChirpyRed.Bool,
 		}
 		marshalledResp, err := json.Marshal(respUser)
 		if err != nil {
@@ -553,12 +558,14 @@ func changeMailNpass(apiCfg *apiConfig) http.HandlerFunc {
 			CreatedAt time.Time `json:"created_at"`
 			UpdatedAt time.Time `json:"updated_at"`
 			Email string `json:"email"`				
+			IsChirpyRed bool `json:"is_chirpy_red"`
 		}
 		postUser := postUserParams{
 			Id: dbUser.ID,
 			CreatedAt: dbUser.CreatedAt,
 			UpdatedAt: dbUser.UpdatedAt,
 			Email: dbUser.Email, 
+			IsChirpyRed: dbUser.IsChirpyRed.Bool,
 		}
 		marshalledResp, err := json.Marshal(postUser)
 		if err != err {
@@ -621,6 +628,39 @@ func deleteChirp(apiCfg *apiConfig) http.HandlerFunc {
 	}
 }
 
+func upgradeToRed(apiCfg *apiConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		type paramsBody struct {
+			Event string `json:"event"`
+			Data struct {
+				UserId uuid.UUID `json:"user_id"`
+			} `json:"data"`
+		}
+		decoder := json.NewDecoder(r.Body) 
+		params := paramsBody{}
+		err := decoder.Decode(&params)
+		if err != nil {
+			log.Printf("Error decoding parameters: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		if params.Event != "user.upgraded" {
+			w.WriteHeader(204)
+			return
+		}
+		user, err := apiCfg.dbQueries.UpgradeToRed(r.Context(), params.Data.UserId)
+		if err != nil {
+			w.WriteHeader(500)
+			return 
+		}
+		if user.ID == uuid.Nil {
+			w.WriteHeader(404)
+			return
+		}
+		w.WriteHeader(204)
+	}
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -653,6 +693,7 @@ func main() {
 	mux.HandleFunc("POST /api/revoke", revokeToken(apiCfg))
 	mux.HandleFunc("PUT /api/users", changeMailNpass(apiCfg))
 	mux.HandleFunc("DELETE /api/chirps/{chirpID}", deleteChirp(apiCfg))
+	mux.HandleFunc("POST /api/polka/webhooks", upgradeToRed(apiCfg))
 
 	server := &http.Server{
 		Addr: ":8080",
