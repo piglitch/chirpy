@@ -100,3 +100,17 @@ func MakeRefreshToken() (string, error) {
 	ecodedStr := hex.EncodeToString(b)
 	return ecodedStr, nil
 }
+
+func GetAPIKey(headers http.Header) (string, error) {
+	if headers == nil {
+		return "", errors.New("no headers were sent")
+	}
+	bearerString := headers.Get("Authorization")
+	if len(bearerString) < 6 {
+		return "", errors.New("bad bearer token")
+	}
+	strippedString := bearerString[6:]
+	cleanStringArray := strings.Split(strippedString, " ") 
+	cleanedString := strings.Join(cleanStringArray, "")
+	return cleanedString, nil
+}

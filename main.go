@@ -24,6 +24,7 @@ type apiConfig struct {
 	dbQueries *databases.Queries
 	platform string
 	jwtSecret string
+	polkaSecret string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler{
@@ -630,6 +631,15 @@ func deleteChirp(apiCfg *apiConfig) http.HandlerFunc {
 
 func upgradeToRed(apiCfg *apiConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		apiKey, err := auth.GetAPIKey(r.Header)
+		if err != nil {
+			w.WriteHeader(401)
+			return
+		}
+		if apiKey != apiCfg.polkaSecret {
+			w.WriteHeader(401)
+			return
+		}
 		type paramsBody struct {
 			Event string `json:"event"`
 			Data struct {
@@ -638,7 +648,7 @@ func upgradeToRed(apiCfg *apiConfig) http.HandlerFunc {
 		}
 		decoder := json.NewDecoder(r.Body) 
 		params := paramsBody{}
-		err := decoder.Decode(&params)
+		err = decoder.Decode(&params)
 		if err != nil {
 			log.Printf("Error decoding parameters: %s", err)
 			w.WriteHeader(500)
@@ -665,6 +675,7 @@ func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
 	jWTSecret := os.Getenv("JWT_SECRET") 
+	polkaSecret := os.Getenv("POLKA_KEY")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatal("unable to connect to the database: ", err)
@@ -676,6 +687,7 @@ func main() {
 		dbQueries: dbQueries,
 		platform: platform,
 		jwtSecret: jWTSecret,
+		polkaSecret: polkaSecret,
 	}
 	rootHandler := http.StripPrefix("/app", http.FileServer(http.Dir(".")))
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(rootHandler))
